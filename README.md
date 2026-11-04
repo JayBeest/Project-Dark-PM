@@ -134,6 +134,7 @@ ProjectMidas -skip -stage dam   # straight into a mission, no menus
 
 This project stands on the shoulders of giants.
 
+- **fgsfdsfgs** for sliced bread.
 - **Murkantor and the Project Midas team** for the phenomenal base C port.
 - **The Perfect Dark decomp team** for the architectural inspiration.
 - **Dab, Catherine, Wren (Wreck?) and the broader community** for pushing the boundaries of what the
@@ -144,6 +145,7 @@ This project stands on the shoulders of giants.
   making the community this fork grew out of, and for keeping the GoldenEye and Perfect Dark scenes
   alive.
 - **The OmniDyne architects** for the shared format mapping.
+- **Nintendo, Rare, James Bond etc**
 
 Credit here follows contribution, and the list is not a closed set. If you have worked on
 something this project uses and are not named, say so in an issue or on the Discord — being left
