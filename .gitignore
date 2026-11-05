@@ -279,6 +279,7 @@ build_linux/
 build_deck/
 build_macos/
 build_native_tests/
+build_miyoo/
 
 # Local-only developer back-story notes (debug history moved out of source comments)
 docs/devnotes/
@@ -306,3 +307,31 @@ docs/devnotes/
 
 # boot_flag_test.sh capture folders (dated; they hold 2 MB BMPs per shot)
 /captures/
+
+# --- Miyoo Mini cross build (see MIYOO_BUILD_ATTEMPT.md) ---------------------
+#
+# Vendored third-party trees, cloned rather than committed. sdl2/ alone is
+# ~1.5 GB because it carries SwiftShader, so neither belongs in this repo's
+# history:
+#   sdl2/                      git@github.com:steward-fu/sdl2.git
+#                              (Miyoo SDL2 fork: mini video/audio drivers)
+#   union-miyoomini-toolchain  git@github.com:shauninman/union-miyoomini-toolchain.git
+#                              (ARM cross toolchain Docker image)
+# The exact commits the build was proven against are pinned in
+# MIYOO_BUILD_ATTEMPT.md.
+/sdl2/
+/union-miyoomini-toolchain/
+
+# Cross-build outputs: the ARM build tree and the ARM SDL2/json-c install prefix
+# produced by scripts/port/build_miyoo_sdl2.sh.
+build_miyoo_deps/
+
+# The packaged app: launch.sh and config.json are source and stay tracked; the
+# binary, the handheld's shared objects, the icon and the copied support .txt
+# files are all produced by scripts/port/package_miyoo.sh.
+/dist/App/ProjectMidas/ProjectMidas
+/dist/App/ProjectMidas/*.so
+/dist/App/ProjectMidas/*.so.*
+/dist/App/ProjectMidas/icon.png
+/dist/App/ProjectMidas/Data/
+/dist/App/ProjectMidas/*.txt

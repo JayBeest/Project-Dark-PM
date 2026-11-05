@@ -17,6 +17,13 @@ endif()
 if(GE_NATIVE_64)
     add_compile_definitions(GE_NATIVE_64=1)
     add_compile_options(-ffp-contract=off)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7.*)$")
+    # Miyoo (ARMv7 Cortex-A7): 32-bit is the only width, so -m32 is not a
+    # request the compiler can honour - the toolchain file has already picked
+    # the ABI. VFP is a real FP32 register file (no x87 excess precision to
+    # dodge), but VFPv4 fuses multiply-add, which moves N64 single-precision
+    # results the same way x87 does on i386, so contraction stays off.
+    add_compile_options(-ffp-contract=off)
 else()
     # SSE avoids x87 excess precision changing N64 single-precision comparisons.
     add_compile_options(-m32 -msse2 -mfpmath=sse)
@@ -59,7 +66,13 @@ if(WIN32)
                      -Wl,--stack,16777216)
     link_libraries(dbghelp)
 elseif(NOT GE_NATIVE_64)
-    add_link_options(-m32 -no-pie)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7.*)$")
+        # -no-pie for the same reason as i386: the compiled-in asset objects
+        # are built -fno-pic and carry absolute relocations a PIE link rejects.
+        add_link_options(-no-pie)
+    else()
+        add_link_options(-m32 -no-pie)
+    endif()
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -187,9 +200,19 @@ set(GU_SRC
 #
 # Known caveats: bg .c interior point tables, ANIM_DATA_* streams and
 # oddtextures texel data are big-endian blobs.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7.*)$")
+    # ARM has no -m32 and no -malign-data=abi. The part of the layout contract
+    # that actually matters (-fno-toplevel-reorder -fno-zero-initialized-in-bss
+    # -fno-common) is architecture-neutral, and the asset blobs are
+    # little-endian on both targets, so the byte-for-byte .data reproduction
+    # this build depends on is unchanged.
+    set(ASSET_ARCH_FLAGS)
+else()
+    set(ASSET_ARCH_FLAGS -m32 -malign-data=abi)
+endif()
 set(ASSET_C_FLAGS
     -std=gnu11
-    -m32 -malign-data=abi
+    ${ASSET_ARCH_FLAGS}
     -fms-extensions -ffreestanding -fno-strict-aliasing -fwrapv -funsigned-char
     -fno-common -fno-zero-initialized-in-bss -fno-toplevel-reorder -fno-pic
     -Og -w
@@ -408,7 +431,10 @@ endif()
 
 if(GE_VIDEO)
     enable_language(CXX)
-    set(CMAKE_CXX_STANDARD 20) # gfx_cc.h uses operator<=> (PD builds C++20)
+    # C++17, not 20: gfx_cc.h's operator<=> was the only C++20 construct and it
+    # is now written out by hand, because the Miyoo toolchain (GCC 8.3) has no
+    # <compare> header. See the portability note in gfx_cc.h.
+    set(CMAKE_CXX_STANDARD 17)
     set(FAST3D_SRC
         port/fast3d/gfx_pc.cpp
         port/fast3d/gfx_cc.cpp
@@ -481,6 +507,28 @@ if(GE_VIDEO)
         # the game needs SDL2.dll beside the exe
         add_custom_command(TARGET ge POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL2_ROOT}/bin/SDL2.dll $<TARGET_FILE_DIR:ge>)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7.*)$")
+        # Miyoo Mini / OnionOS. The SDL2 here is the steward-fu fork in sdl2/:
+        # it adds the "mini" video driver (MI_GFX panel + EGL/GLES) and is the
+        # only SDL2 that knows the hardware. It is built inside the toolchain
+        # container and installed to SDL2_MIYOO_ROOT (see MIYOO_BUILD_ATTEMPT.md).
+        if(NOT SDL2_MIYOO_ROOT)
+            message(FATAL_ERROR
+                "Miyoo build needs -DSDL2_MIYOO_ROOT=<install prefix of the ARM SDL2 fork>")
+        endif()
+        target_include_directories(ge PRIVATE ${SDL2_MIYOO_ROOT}/include/SDL2)
+        target_link_directories(ge PRIVATE ${SDL2_MIYOO_ROOT}/lib)
+        # EGL/GLESv2 come from the same prefix (SwiftShader in the fork's
+        # prebuilt/); they ship beside the binary on the handheld.
+        target_link_libraries(ge SDL2 EGL GLESv2)
+        # The device starts the game from App/ProjectMidas/ with no useful
+        # LD_LIBRARY_PATH, and SDL's mini driver dlopens libEGL/libGLESv2 by
+        # bare name, so make the binary's own folder the search path.
+        set_target_properties(ge PROPERTIES
+            BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+            # Overwrite the build RPATH with $ORIGIN too, so the binary that
+            # package_miyoo.sh copies does not leak this machine's build prefix.
+            BUILD_WITH_INSTALL_RPATH ON)
     elseif(APPLE OR GE_NATIVE_64)
         find_package(SDL2 REQUIRED CONFIG)
         find_package(OpenGL REQUIRED)
