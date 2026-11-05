@@ -1,0 +1,5 @@
+{
+  "label": "Project Midas",
+  "icon": "icon.png",
+  "launch": "launch.sh"
+}
