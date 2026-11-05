@@ -2020,10 +2020,15 @@ static void inputBackendHints(void)
             s_OptDInput = 1;
         }
     }
+#ifdef SDL_HINT_DIRECTINPUT_ENABLED
+    /* DirectInput is a Windows backend; SDL only grew this hint in 2.0.22.
+     * The Miyoo build links the 2.0.20 fork in sdl2/, where it does not exist
+     * and where the hint would mean nothing anyway (Linux/evdev input). */
     if (!s_OptDInput)
     {
         SDL_SetHint(SDL_HINT_DIRECTINPUT_ENABLED, "0");
     }
+#endif
 
     /* the other four backends (hidapi = PS4/PS5/Switch class, rawinput =
      * Xbox-class on SDL 2.30, wgi = Windows.Gaming.Input trigger rumble,

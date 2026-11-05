@@ -45,7 +45,30 @@ struct TextureCacheKey {
      * reuse that entry. */
     uint8_t masks, maskt;
 
-    bool operator==(const TextureCacheKey&) const noexcept = default;
+    /* PD defaulted this with `= default`, which needs C++20 (the Miyoo cross
+     * toolchain is GCC 8.3). Written out: every member, in declaration order,
+     * which is exactly what the defaulted operator did - the cache identity is
+     * address + palette + format + geometry + wrap masks, and dropping any one
+     * term reintroduces the stale-texture bugs the comments above describe.
+     * `!=` is spelled out too: in C++20 `a != b` rewrites to `!(a == b)`, and
+     * that rewrite does not exist at C++17. */
+    bool operator==(const TextureCacheKey& o) const noexcept {
+        return texture_addr == o.texture_addr
+            && palette_addrs[0] == o.palette_addrs[0]
+            && palette_addrs[1] == o.palette_addrs[1]
+            && fmt == o.fmt
+            && siz == o.siz
+            && palette_index == o.palette_index
+            && line_size_bytes == o.line_size_bytes
+            && size_bytes == o.size_bytes
+            && palette_sum == o.palette_sum
+            && masks == o.masks
+            && maskt == o.maskt;
+    }
+
+    bool operator!=(const TextureCacheKey& o) const noexcept {
+        return !(*this == o);
+    }
 
     struct Hasher {
         size_t operator()(const TextureCacheKey& key) const noexcept {

@@ -4,10 +4,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef __cplusplus
-#include <compare>
-#endif
-
 enum {
     SHADER_0,
     SHADER_INPUT_1,
@@ -56,7 +52,27 @@ enum {
 struct ColorCombinerKey {
     uint64_t combine_mode;
     uint64_t options;
-    auto operator<=>(const ColorCombinerKey&) const = default;
+#ifdef __cplusplus
+    /* PD defaulted these with `auto operator<=>(const ColorCombinerKey&) const
+     * = default;`, which needs C++20 and <compare>. The Miyoo cross toolchain
+     * is GCC 8.3, so the same lexicographic order is spelled out: member by
+     * member, in declaration order, which is exactly what the default produced. */
+    bool operator==(const ColorCombinerKey& o) const {
+        return combine_mode == o.combine_mode && options == o.options;
+    }
+    bool operator!=(const ColorCombinerKey& o) const {
+        return !(*this == o);
+    }
+    bool operator<(const ColorCombinerKey& o) const {
+        if (combine_mode != o.combine_mode) {
+            return combine_mode < o.combine_mode;
+        }
+        return options < o.options;
+    }
+    bool operator>(const ColorCombinerKey& o) const { return o < *this; }
+    bool operator<=(const ColorCombinerKey& o) const { return !(o < *this); }
+    bool operator>=(const ColorCombinerKey& o) const { return !(*this < o); }
+#endif
 };
 
 #define SHADER_MAX_TEXTURES 2
