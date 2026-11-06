@@ -270,6 +270,11 @@ win_conf.log
 build_asan/
 build_asan_docker/
 
+# Locally built dependencies (.deps/ffmpeg-caca, its source tarball) - the
+# -terminal backend's libcaca-enabled ffmpeg, rebuilt by
+# scripts/port/build_ffmpeg_caca.sh. Never committed: hundreds of MB.
+.deps/
+
 # Local recovery/backup dumps - never commit (may contain the assets/ tree)
 /backup/
 
