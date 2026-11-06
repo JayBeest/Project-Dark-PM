@@ -130,6 +130,15 @@ ProjectMidas -skip 2            # skip two of them, stop on the Rare logo
 ProjectMidas -skip -stage dam   # straight into a mission, no menus
 ```
 
+### Known issues
+
+- **Crosshair SIGSEGV, open.** Seen on macOS arm64 during attract demos, with
+  `portDisplayCrosshairImage` in the backtrace. A pointer-width bug in that path
+  is fixed, but it has **not** been proven to be this crash's cause, and **when
+  it started is not known** — the game was not tested between the changes that
+  plausibly introduced it, so there is no known good build. The evidence, the
+  fix, and the first measurement to take: [docs/port/crosshair-64bit.md](docs/port/crosshair-64bit.md).
+
 ## Credits and origins
 
 This project stands on the shoulders of giants.
