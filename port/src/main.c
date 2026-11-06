@@ -518,17 +518,115 @@ static void portArmWatchpoints(void)
 }
 #else
 #include <execinfo.h>
+#if defined(__APPLE__)
+#include <sys/ucontext.h> /* the fault pc/sp/fp; <ucontext.h> demands _XOPEN_SOURCE */
+#else
+#include <ucontext.h>
+#endif
+#include <pthread.h>
 
 /* Bring-up crash handler: print a raw backtrace (addresses decode with
- * addr2line -e build_pc/ge) so crashes are diagnosable without gdb. */
-static void portCrashHandler(int sig)
+ * addr2line -e build_pc/ge) so crashes are diagnosable without gdb.
+ *
+ * sigaction/SA_SIGINFO rather than signal(): the faulting address turns an
+ * ambiguous report into a decidable one. A leaf function that faults reports
+ * the CALLER's return address in the backtrace, so "portDisplayCrosshairImage
+ * +188" can mean "that function" or "something it called" - si_addr and the
+ * saved pc tell the two apart. The stack figures catch the third case, a
+ * guard-page hit, which looks like a wild pointer in every other respect. */
+static void portCrashHandler(int sig, siginfo_t *si, void *uctx)
 {
-    void *frames[24];
-    int n = backtrace(frames, 24);
-    fprintf(stderr, "\nge: fatal signal %d, backtrace (%d frames):\n", sig, n);
+    void *frames[32];
+    int n = backtrace(frames, 32);
+
+    fprintf(stderr, "\nge: fatal signal %d", sig);
+#ifdef SIGSEGV
+    if (sig == SIGSEGV) fprintf(stderr, " (SIGSEGV)");
+#endif
+#ifdef SIGBUS
+    if (sig == SIGBUS) fprintf(stderr, " (SIGBUS)");
+#endif
+#ifdef SIGFPE
+    if (sig == SIGFPE) fprintf(stderr, " (SIGFPE)");
+#endif
+#ifdef SIGILL
+    if (sig == SIGILL) fprintf(stderr, " (SIGILL)");
+#endif
+    fprintf(stderr, "\n");
+
+    if (si != NULL)
+    {
+        /* the address the faulting instruction touched; for a bad pointer
+         * this is the pointer, and 0x0 means a NULL dereference */
+        fprintf(stderr, "ge: FAULT addr=%p", si->si_addr);
+#ifdef __APPLE__
+        if (si->si_code == SEGV_MAPERR) fprintf(stderr, " (unmapped)");
+        else if (si->si_code == SEGV_ACCERR) fprintf(stderr, " (no access)");
+#endif
+        fprintf(stderr, "\n");
+    }
+
+#if defined(__APPLE__)
+    if (uctx != NULL)
+    {
+        ucontext_t *uc = (ucontext_t *) uctx;
+        void *pc = NULL, *sp = NULL, *fp = NULL, *lr = NULL;
+
+#if defined(__arm64__) || defined(__aarch64__)
+        pc = (void *) uc->uc_mcontext->__ss.__pc;
+        sp = (void *) uc->uc_mcontext->__ss.__sp;
+        fp = (void *) uc->uc_mcontext->__ss.__fp;
+        lr = (void *) uc->uc_mcontext->__ss.__lr;
+#elif defined(__x86_64__)
+        pc = (void *) uc->uc_mcontext->__ss.__rip;
+        sp = (void *) uc->uc_mcontext->__ss.__rsp;
+        fp = (void *) uc->uc_mcontext->__ss.__rbp;
+#endif
+        fprintf(stderr, "ge: FAULT pc=%p sp=%p fp=%p lr=%p\n", pc, sp, fp, lr);
+
+        {   /* Stack headroom. A guard-page hit produces a backtrace that looks
+             * exactly like a bad pointer, and the two need opposite fixes. */
+            void *base = pthread_get_stackaddr_np(pthread_self());
+            size_t size = pthread_get_stacksize_np(pthread_self());
+            size_t used = (size_t) ((char *) base - (char *) sp);
+
+            if (size > 0 && sp != NULL)
+            {
+                fprintf(stderr, "ge: FAULT stack: sp is %zu of %zu bytes used (%zu%%), headroom %zu\n",
+                        used, size, used * 100 / size, used < size ? size - used : 0);
+            }
+        }
+    }
+#else
+    (void) uctx;
+#endif
+
+    fprintf(stderr, "ge: fatal signal %d, backtrace (%d frames):\n", sig, n);
     backtrace_symbols_fd(frames, n, 2);
     fflush(NULL);
     _exit(128 + sig);
+}
+
+/* SIGSEGV/SIGBUS/SIGFPE/SIGILL with SA_SIGINFO, so the handler above receives
+ * the fault address. signal() cannot deliver it. */
+static void portArmCrashSignals(void)
+{
+    struct sigaction sa;
+    const int sigs[] = { SIGSEGV, SIGFPE, SIGILL };
+    size_t i;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = portCrashHandler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+
+    for (i = 0; i < sizeof(sigs) / sizeof(*sigs); i++)
+    {
+        sigaction(sigs[i], &sa, NULL);
+    }
+#ifdef SIGBUS
+    sigaction(SIGBUS, &sa, NULL);
+#endif
 }
 #endif
 
@@ -788,17 +886,19 @@ int main(int argc, char **argv)
      * below (arena reservation, overlay check, SDL/GL, controller init) can
      * hang in a hooked process. The watchdog's 60 s boot grace covers all of
      * it. */
-    signal(SIGSEGV, portCrashHandler);
 #ifdef _WIN32
+    signal(SIGSEGV, portCrashHandler);
     SetUnhandledExceptionFilter(portSehHandler);
     portArmWatchpoints(); /* GE_WATCH=1: see comment above */
     portArmStallWatchdog(); /* always on: hangs become backtraces */
     AddVectoredExceptionHandler(1, portFirstChanceAV); /* crashes report even if a filter swallows them */
-#else
-    signal(SIGBUS, portCrashHandler);
-#endif
     signal(SIGFPE, portCrashHandler);
     signal(SIGILL, portCrashHandler);
+#else
+    /* SA_SIGINFO (see portCrashHandler): the fault address is the difference
+     * between a decidable crash report and a guess. */
+    portArmCrashSignals();
+#endif
 #ifdef _WIN32
     /* GE_STALLTEST=1: park the main thread here forever so the stall
      * watchdog's boot-grace path + loader-lock-free module naming can be
