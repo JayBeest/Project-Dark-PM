@@ -558,6 +558,13 @@ if(GE_PORT_TESTS)
     add_executable(boot_flags_test port/tests/boot_flags.c port/src/boot_flags.c)
     add_test(NAME boot_flags COMMAND boot_flags_test)
 
+    # A Gfx word is 32 bits; a host pointer baked into one must survive the
+    # cast. Callers checked only "is it >= 0x10000000?", which is true for every
+    # allocation on arm64 macOS (user space starts at 4 GB) - so the crosshair
+    # tint copy truncated into a wild address. This pins the real rule.
+    add_executable(dl_pointer_test port/tests/dl_pointer.c)
+    add_test(NAME dl_pointer COMMAND dl_pointer_test)
+
     # Frame/tick statistics of the in-game block: pure functions, so the numbers
     # a player reads in the corner are checked without a window, a GPU or a ROM.
     add_executable(tick_stats_test port/tests/tick_stats.c port/src/tick_stats.c)

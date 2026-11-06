@@ -1,5 +1,6 @@
 #ifndef TARGET_N64
 #include "port_options.h"
+#include "port_hostptr.h" /* PORT_DL_POINTER_FITS: a 32-bit Gfx word is not a pointer */
 #endif
 #include <ultra64.h>
 #include "game/explosion.h"
@@ -7854,6 +7855,17 @@ void gunDrawSight(Gfx **gdl) {
                 const void *copy = portTexCrosshairCopyFor(want);
                 Gfx *g;
 
+                /* Only a pointer that survives a 32-bit Gfx word may be baked
+                 * in: a truncated one is resolved by seg_addr as a segment
+                 * reference and becomes a wild address. portTexCrosshairCopyFor
+                 * already refuses (returns NULL) when it cannot allocate one,
+                 * so this is the same rule enforced where the word is written -
+                 * the copy pool is not the only thing that could ever hand one
+                 * back. */
+                if (copy != NULL && !PORT_DL_POINTER_FITS(copy))
+                {
+                    copy = NULL;
+                }
                 for (g = from; copy != NULL && g < (Gfx *) sp54; g++)
                 {
                     if ((g->words.w0 >> 24) == (u32) (u8) G_SETTIMG

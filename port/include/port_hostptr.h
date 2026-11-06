@@ -30,4 +30,29 @@ int portXboxIsHostAddr(unsigned int v);
 #define PORT_IS_HOST_ADDR(v) ((uintptr_t) (v) >= 0x10000000u)
 #endif
 
+/*
+ * PORT_DL_POINTER_FITS(p): can `p` be baked into a 32-bit Gfx word?
+ *
+ * A Gfx word is 32 bits, so a host pointer stored in one must survive
+ * (u32)(uintptr_t) AND still satisfy PORT_IS_HOST_ADDR - otherwise seg_addr
+ * reads the truncated value as a segment reference and resolves it to a wild
+ * address. Both halves are required; the >= 0x10000000 test alone is not, and
+ * that was the bug: on arm64 macOS the user address space STARTS at
+ * 0x100000000 (4 GB), so every mmap result is >= 0x10000000 and fits in 32
+ * bits never.
+ *
+ * Measured on this machine (macOS arm64): mmap ignores the high-arena hint and
+ * returns ~0x104afc000 whatever you ask for; MAP_FIXED below 4 GB fails
+ * because nothing may live there. So on Apple Silicon this is false for EVERY
+ * heap pointer, and a caller that must bake one into a display list has to
+ * degrade gracefully rather than truncate.
+ *
+ * The lower bound is PORT_IS_HOST_ADDR, not a literal 0x10000000: the Xbox
+ * build rebases its image to 0x00010000 and legitimately has host pointers
+ * below the PC floor. On any 32-bit target the upper bound is vacuous, so this
+ * reduces exactly to the old rule there.
+ */
+#define PORT_DL_POINTER_FITS(p) \
+    (PORT_IS_HOST_ADDR(p) && (uintptr_t) (p) <= 0xFFFFFFFFu)
+
 #endif

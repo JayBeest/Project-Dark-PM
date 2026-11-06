@@ -64,6 +64,7 @@
 #include <bondtypes.h>
 #include <PR/gbi.h>
 #include "game/image.h"   /* struct tex, TEXFORMAT_*, PORT_TEXTURES_MAX */
+#include "port_hostptr.h"  /* PORT_DL_POINTER_FITS: pointers baked into Gfx words */
 
 extern const char *portRootPath(const char *name); /* main.c: <exe dir>/name */
 extern void portConLogf(const char *fmt, ...);       /* port_console.c */
@@ -1037,6 +1038,26 @@ const void *portTexCrosshairCopyFor(s32 rgb)
     }
     if (buf == NULL)
     {
+        return NULL;
+    }
+    if (!PORT_DL_POINTER_FITS(buf))
+    {
+        /* The address cannot be written into a 32-bit Gfx word without
+         * truncating into something seg_addr resolves to a wild pointer. On
+         * arm64 macOS that is EVERY allocation (user space starts at 4 GB), so
+         * this is the normal case there, not an edge one - returning NULL makes
+         * the caller draw the vanilla crosshair instead of crashing.
+         * Tinting lives on in the texel-recolour path (portTexCrosshairTinted),
+         * which needs no display-list pointer. */
+        static s32 warned;
+
+        if (!warned)
+        {
+            warned = 1;
+            portConLogf("ge: xhair: tint copy at %p does not fit a 32-bit display-list word "
+                        "(user space starts at 4 GB here) - drawing the vanilla crosshair\n",
+                        (void *) buf);
+        }
         return NULL;
     }
     texCrosshairTintTo(buf, rgb);
