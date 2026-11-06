@@ -45,6 +45,13 @@ int portBootFlagIs(const char *arg, const char *name)
     return (*arg == '\0' && *name == '\0') ? 1 : 0;
 }
 
+/* Defined below, beside the other =value matcher: --backend=caca and
+ * --backend=terminal are -terminal. Forward-declared because the parse above
+ * is where it is used. */
+static int flagIsTerminal(const char *arg);
+static int flagIsTerminalGlitch(const char *arg);
+static int terminalDriverFor(const char *arg);
+
 /* A whole decimal argument, or -1. Used for -skip's count: "3" is a count,
  * "dam" and "-audio_pump" are not, and neither is anything too long to be
  * one. Zero counts: -skip 0 is the same as not passing -skip. */
@@ -79,6 +86,10 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
     out->audio_log = 0;
     out->skip_screens = 0;
     out->stage = NULL;
+    out->terminal = 0;
+    out->terminal_glitch = 0;
+    out->terminal_driver = 0;
+    out->terminal_spelling = NULL;
     out->classic_spelling = NULL;
 
     if (argv == NULL) {
@@ -112,6 +123,23 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 out->stage = argv[++i];
             }
+        } else if (flagIsTerminalGlitch(argv[i])) {
+            out->terminal = 1;
+            out->terminal_glitch = 1;
+            out->terminal_spelling = argv[i];
+        } else if (flagIsTerminal(argv[i])) {
+            int drv;
+
+            out->terminal = 1;
+            out->terminal_spelling = argv[i];
+            /* First driver request wins, so `-terminal --backend=ansi` means
+             * auto: the bare flag stated no preference and a later one does.
+             * A SECOND --backend=ansi after --backend=ffmpeg overwrites, which
+             * is last-one-wins like the rest of this command line. */
+            drv = terminalDriverFor(argv[i]);
+            if (drv > 0) {
+                out->terminal_driver = drv;
+            }
         }
     }
     /* A bare -skip outranks a count: it is the more aggressive request, and
@@ -121,22 +149,92 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
 
 /* 1 when `arg` matches `name` followed by '=' and anything: the `--flag=value`
  * form. Same dash and separator rules as portBootFlagIs, then a strict '='. */
-static int flagIsAssignment(const char *arg, const char *name)
+static const char *flagAssignmentValue(const char *arg, const char *name)
 {
     if (arg == NULL || name == NULL || arg[0] != '-') {
-        return 0;
+        return NULL;
     }
     while (*arg == '-') {
         arg++;
     }
     while (*arg != '\0' && *name != '\0') {
         if (lowerDash(*arg) != lowerDash(*name)) {
-            return 0;
+            return NULL;
         }
         arg++;
         name++;
     }
-    return (*name == '\0' && *arg == '=') ? 1 : 0;
+    return (*name == '\0' && *arg == '=') ? arg + 1 : NULL;
+}
+
+static int flagIsAssignment(const char *arg, const char *name)
+{
+    return flagAssignmentValue(arg, name) != NULL;
+}
+
+/* Case-insensitive equality for a flag's value (which has no dashes to fold). */
+static int valueIs(const char *value, const char *want)
+{
+    if (value == NULL) {
+        return 0;
+    }
+    while (*value != '\0' && *want != '\0') {
+        char a = *value;
+        char b = *want;
+        if (a >= 'A' && a <= 'Z') a = (char) (a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char) (b - 'A' + 'a');
+        if (a != b) {
+            return 0;
+        }
+        value++;
+        want++;
+    }
+    return (*value == '\0' && *want == '\0') ? 1 : 0;
+}
+
+/* --backend=caca / --backend=terminal: the same request as -terminal.
+ *
+ * Only the implemented values count. `--backend=sdl` would otherwise be a no-op
+ * that looks like it did something, so it is NOT a known flag:
+ * videoParseBootArgs' existing "ignoring argument" report names it instead. */
+static int flagIsTerminalBackend(const char *arg)
+{
+    const char *v = flagAssignmentValue(arg, "backend");
+
+    return v != NULL && (valueIs(v, "caca") || valueIs(v, "terminal")
+                         || valueIs(v, "ffmpeg") || valueIs(v, "ansi"));
+}
+
+static int flagIsTerminal(const char *arg)
+{
+    return portBootFlagIs(arg, "terminal") || flagIsTerminalBackend(arg);
+}
+
+/* The driver a -terminal spelling asks for, or -1 when it only asks for the
+ * mode: 1 = ffmpeg caca, 2 = the built-in ANSI renderer. These numbers are the
+ * PortTermDriver enum in term_backend.h (kept numeric to avoid a header
+ * dependency from this pure parse). */
+static int terminalDriverFor(const char *arg)
+{
+    const char *v = flagAssignmentValue(arg, "backend");
+
+    if (v != NULL)
+    {
+        if (valueIs(v, "ffmpeg")) return 1;
+        if (valueIs(v, "ansi")) return 2;
+    }
+    return -1;
+}
+
+/* -terminal_glitch: the terminal-mode log toggle. Implies -terminal, because
+ * "show me the log on the terminal" is meaningless without the terminal mode
+ * that owns the screen. Named for what it looks like, not for what it does:
+ * the game's `ge:` lines stamp themselves over the art at whatever column the
+ * cursor reached, leaving a staircase. MIDAS_TERM_NOLOG=1 is the same switch
+ * from the environment. */
+static int flagIsTerminalGlitch(const char *arg)
+{
+    return portBootFlagIs(arg, "terminal_glitch") || portBootFlagIs(arg, "glitch");
 }
 
 int portBootFlagKnown(const char *arg)
@@ -151,7 +249,8 @@ int portBootFlagKnown(const char *arg)
      * value from the NEXT argument, so only the bare flag is a flag here. */
     if (portBootFlagIs(arg, "classic") || portBootFlagIs(arg, "n64_aa")
         || portBootFlagIs(arg, "audio_pump") || portBootFlagIs(arg, "audio_log")
-        || portBootFlagIs(arg, "skip") || portBootFlagIs(arg, "stage")) {
+        || portBootFlagIs(arg, "skip") || portBootFlagIs(arg, "stage")
+        || flagIsTerminal(arg) || flagIsTerminalGlitch(arg)) {
         return 1;
     }
 

@@ -558,6 +558,12 @@ if(GE_PORT_TESTS)
     add_executable(boot_flags_test port/tests/boot_flags.c port/src/boot_flags.c)
     add_test(NAME boot_flags COMMAND boot_flags_test)
 
+    # -terminal's pure half: the box downscale and the ANSI half-block packer.
+    # No window, GPU, ffmpeg or terminal - and those two functions decide an
+    # upside-down/squashed/short picture, which fails silently.
+    add_executable(term_backend_test port/tests/term_backend.c port/src/term_backend.c)
+    add_test(NAME term_backend COMMAND term_backend_test)
+
     # A Gfx word is 32 bits; a host pointer baked into one must survive the
     # cast. Callers checked only "is it >= 0x10000000?", which is true for every
     # allocation on arm64 macOS (user space starts at 4 GB) - so the crosshair

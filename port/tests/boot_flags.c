@@ -300,6 +300,116 @@ static void beside_a_rom_path(void)
       parse(&f, 2, argv); CHECK(f.audio_pump == 0); }
 }
 
+/* -terminal: the flag itself, and its --backend=caca / --backend=terminal
+ * aliases. Each must set the one field, and the spelling must be recorded -
+ * the log line names what was typed, and a wrong name there is the same defect
+ * as a flag that did nothing. */
+static void terminal_flag(void)
+{
+    PortBootFlags f;
+
+    { char *argv[] = { (char *) "P", (char *) "-terminal", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1);
+      CHECK(f.classic == 0 && f.audio_pump == 0 && f.audio_log == 0);
+      CHECK(f.terminal_spelling != NULL && strcmp(f.terminal_spelling, "-terminal") == 0); }
+
+    { char *argv[] = { (char *) "P", (char *) "--backend=caca", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1);
+      CHECK(f.terminal_spelling != NULL && strcmp(f.terminal_spelling, "--backend=caca") == 0); }
+
+    { char *argv[] = { (char *) "P", (char *) "--backend=terminal", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1); }
+
+    /* Same dash/underscore/case rules as every other flag name. */
+    { char *argv[] = { (char *) "P", (char *) "--TERMINAL", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1); }
+
+    /* A backend we do not implement is NOT silently a no-op: it is unknown,
+     * so videoParseBootArgs reports it as ignored. */
+    { char *argv[] = { (char *) "P", (char *) "--backend=sdl", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 0);
+      CHECK(!portBootFlagKnown("--backend=sdl")); }
+
+    /* ...and -backend with no value is not the flag either. */
+    { char *argv[] = { (char *) "P", (char *) "-backend", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 0); }
+    /* --backend=<driver>: the same mode, with the implementation pinned. This
+     * is what makes the two drivers comparable, so the mapping is worth a test. */
+    { char *argv[] = { (char *) "P", (char *) "--backend=ansi", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1);
+      CHECK(f.terminal_driver == 2); }
+
+    { char *argv[] = { (char *) "P", (char *) "--backend=ffmpeg", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1);
+      CHECK(f.terminal_driver == 1); }
+
+    /* caca and -terminal only ask for the MODE: the driver stays on auto. */
+    { char *argv[] = { (char *) "P", (char *) "--backend=caca", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1);
+      CHECK(f.terminal_driver == 0); }
+
+    { char *argv[] = { (char *) "P", (char *) "-terminal", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal_driver == 0); }
+
+    /* A later driver request wins, and -terminal does not clear it. */
+    { char *argv[] = { (char *) "P", (char *) "-terminal", (char *) "--backend=ansi", NULL };
+      parse(&f, 3, argv);
+      CHECK(f.terminal == 1 && f.terminal_driver == 2); }
+
+    /* ...and a bare -terminal after a driver does not reset it to auto. */
+    { char *argv[] = { (char *) "P", (char *) "--backend=ffmpeg", (char *) "-terminal", NULL };
+      parse(&f, 3, argv);
+      CHECK(f.terminal == 1 && f.terminal_driver == 1); }
+
+    /* -terminal_glitch: the log-on-terminal toggle. It IMPLIES terminal mode,
+     * because showing the log on a screen the backend does not own is just a
+     * normal console. -glitch is the short spelling. */
+    { char *argv[] = { (char *) "P", (char *) "-terminal_glitch", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1 && f.terminal_glitch == 1); }
+
+    { char *argv[] = { (char *) "P", (char *) "-glitch", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1 && f.terminal_glitch == 1); }
+
+    /* The default is the routed log, so the flag must be OFF unless asked. */
+    { char *argv[] = { (char *) "P", (char *) "-terminal", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.terminal == 1 && f.terminal_glitch == 0); }
+
+    /* It composes with a forced driver and does not disturb it. */
+    { char *argv[] = { (char *) "P", (char *) "-terminal_glitch", (char *) "--backend=ansi", NULL };
+      parse(&f, 3, argv);
+      CHECK(f.terminal == 1 && f.terminal_glitch == 1 && f.terminal_driver == 2); }
+
+    /* ...and a reused struct must not inherit it. */
+    { char *yes[] = { (char *) "P", (char *) "-terminal_glitch", NULL };
+      char *no[]  = { (char *) "P", NULL };
+      parse(&f, 2, yes);
+      CHECK(f.terminal_glitch == 1);
+      parse(&f, 1, no);
+      CHECK(f.terminal == 0 && f.terminal_glitch == 0); }
+
+    /* Reused struct: the driver must be cleared by the next parse, or a launch
+     * would silently inherit the previous one's forced driver. */
+    { char *yes[] = { (char *) "P", (char *) "--backend=ansi", NULL };
+      char *no[]  = { (char *) "P", NULL };
+      parse(&f, 2, yes);
+      CHECK(f.terminal_driver == 2);
+      parse(&f, 1, no);
+      CHECK(f.terminal == 0 && f.terminal_driver == 0); }
+}
+
 /* Parse writes every field, so a caller may reuse the struct without clearing. */
 static void parse_clears_previous_state(void)
 {
@@ -332,6 +442,15 @@ static void known_flags(void)
     CHECK(portBootFlagKnown("-skip"));
     CHECK(portBootFlagKnown("--skip"));
     CHECK(portBootFlagKnown("-stage"));
+    CHECK(portBootFlagKnown("-terminal"));
+    CHECK(portBootFlagKnown("--terminal"));
+    CHECK(portBootFlagKnown("--backend=caca"));
+    CHECK(portBootFlagKnown("--backend=terminal"));
+    CHECK(portBootFlagKnown("--backend=ffmpeg"));
+    CHECK(portBootFlagKnown("--backend=ansi"));
+    CHECK(portBootFlagKnown("-terminal_glitch"));
+    CHECK(portBootFlagKnown("--terminal_glitch"));
+    CHECK(portBootFlagKnown("-glitch"));
 
     /* the two romdata.c parses, both spellings each. `=value` is the form the
      * first cut of the log reported as UNKNOWN for two working flags. */
@@ -348,6 +467,9 @@ static void known_flags(void)
     CHECK(!portBootFlagKnown("--rom"));
     CHECK(!portBootFlagKnown("--langs=jp"));
     CHECK(!portBootFlagKnown("-n64_aa=1"));   /* not acted on, and not known */
+    CHECK(!portBootFlagKnown("--backend=sdl")); /* not implemented, so not known */
+    CHECK(!portBootFlagKnown("--backend="));     /* empty value: no driver */
+    CHECK(!portBootFlagKnown("-glitched"));      /* not the toggle */
     CHECK(!portBootFlagKnown("-classic_mode")); /* the ini key is not a flag */
     CHECK(!portBootFlagKnown("audio_pump"));   /* bare word: the ROM path slot */
     CHECK(!portBootFlagKnown("-"));
@@ -373,6 +495,7 @@ int main(void)
     unknown_and_prefix();
     beside_a_rom_path();
     parse_clears_previous_state();
+    terminal_flag();
     known_flags();
 
     printf("boot_flags: all checks passed\n");

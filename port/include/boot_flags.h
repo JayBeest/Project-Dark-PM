@@ -55,6 +55,25 @@ typedef struct {
     /* -stage <name>: start a mission directly, the same thing GE_STAGE does.
      * Not owned - points into argv. NULL = no stage requested. */
     const char *stage;
+    /* -terminal (alias --backend=caca / --backend=terminal): draw the game as
+     * ASCII art in the terminal. The picture comes from the framebuffer, piped
+     * to `ffmpeg -f caca` when that ffmpeg has libcaca, and rendered as ANSI
+     * 24-bit half-blocks when it does not. See term_backend.h. */
+    int terminal;
+    /* -terminal_glitch (alias -glitch): keep the game's log ON the terminal
+     * instead of routing it to Data/Logs/terminal.log. Both renderers paint the
+     * whole screen, so the `ge:` lines then land on top of the picture and leave
+     * a staircase of indented text. That is the routed default's bug and this
+     * flag's feature - it is a toggle, not a fix. MIDAS_TERM_NOLOG=1 is the
+     * environment equivalent. Implies `terminal`. */
+    int terminal_glitch;
+    /* Which renderer -terminal uses: 0 = auto (probe for a caca-capable
+     * ffmpeg), 1 = force the ffmpeg caca pipe, 2 = force the built-in ANSI
+     * renderer. Only --backend=ffmpeg / --backend=ansi set it; the plain
+     * -terminal and --backend=caca leave it on auto. */
+    int terminal_driver;    /* The token that set `terminal`, or NULL - so the log can name the spelling
+     * actually typed (`-terminal` vs `--backend=caca`). Not owned. */
+    const char *terminal_spelling;
     /* The token that set `classic`, or NULL. For the log line only, and only so
      * it can name the spelling the caller actually typed: a launch that says
      * "-n64_aa -> Classic Mode on" when the command line said -classic would be
@@ -71,7 +90,11 @@ typedef struct {
  * --rom-file and --lang. A value that is not a number (-skip banana) is not a
  * count: it is left alone, so the flag keeps its bare meaning and the value is
  * free to be the ROM path. Nothing is silently consumed.
- */
+ *
+ * -terminal has THREE spellings: -terminal, --backend=caca (both = auto) and
+ * --backend=ffmpeg / --backend=ansi, which force one of the two drivers. The
+ * forced spellings are what make the two implementations comparable; the auto
+ * form is what a player wants. */
 void portBootFlagsParse(int argc, char **argv, PortBootFlags *out);
 
 /*

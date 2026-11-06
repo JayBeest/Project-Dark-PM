@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <SDL.h>
 #include <unistd.h>
 #include <time.h>
@@ -10,6 +11,7 @@
 #include "gfx_screen_config.h"
 #include "glad/glad.h" /* GE bring-up: glReadPixels for GE_SHOT screenshots */
 #include "icon_rgba.h"  /* the window icon (scripts/port/make_icon.py) */
+#include "term_backend.h" /* -terminal: the frame readback piped to ffmpeg -f caca */
 
 #ifdef _WIN32
 /* Hybrid-GPU laptops: NVIDIA / AMD drivers read these two exports to run the exe
@@ -502,7 +504,32 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
     SDL_GL_MakeCurrent(wnd, ctx);
     SDL_GL_SetSwapInterval(1);
 
-    SDL_ShowWindow(wnd);
+    if (portTermBackendHidesWindow()) {
+        /* -terminal: the context is all this run needs; the window was created
+         * hidden and simply stays that way. Rendering into a hidden window is
+         * legal, and some drivers' flip path is cheaper for it. A driver that
+         * refuses to draw into one is what MIDAS_TERM_SHOWWINDOW=1 is for. */
+        sysLogPrintf(LOG_NOTE, "SDL: -terminal: window stays hidden (GL context only)");
+
+        /* A hidden window can never take focus, and SDL drops JOYSTICK EVENTS
+         * for an unfocused app unless this hint is set - which is why the pad
+         * went dead the moment the window stopped being shown. The port's own
+         * [input] background_input option flips the same hint (input_pc.c);
+         * here it is not a preference but a requirement of the mode, so it is
+         * forced rather than assumed.
+         *
+         * MUST be set before the controller subsystem starts: input init runs
+         * after this (see the boot log: "window + GL context up" then
+         * "controller backends starting").
+         *
+         * The keyboard stays dead in this mode - key events go to the focused
+         * window and a hidden one cannot hold focus - so a pad (or
+         * MIDAS_TERM_SHOWWINDOW=1) is how you play. */
+        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+        sysLogPrintf(LOG_NOTE, "SDL: -terminal: joystick background events ON (pad works while the window is hidden)");
+    } else {
+        SDL_ShowWindow(wnd);
+    }
     if (fullscreen_state && fullscreen_flag == SDL_WINDOW_FULLSCREEN) {
         /* the display lines above were logged before an exclusive-fullscreen boot
          * switched modes, so also log the mode actually in use (its refresh caps the frame rate) */
@@ -515,6 +542,14 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
 
     qpc_freq = SDL_GetPerformanceFrequency();
 }
+
+/* -terminal's readback scratch (gfx_sdl_maybe_terminal below). File scope and
+ * process-lifetime on purpose: the readback runs on whichever thread owns GL
+ * (the render thread under async mode), and wapi->close is never called during
+ * this port's shutdown, so there is no single safe place to free it. Realloc'd
+ * to the drawable size once and reused; the OS reclaims it at exit. */
+static uint8_t *term_px = NULL;
+static size_t term_px_cap = 0;
 
 static void gfx_sdl_close(void) {
     is_running = false;
@@ -844,6 +879,39 @@ static void gfx_sdl_maybe_screenshot(void) {
     SDL_free(px);
 }
 
+/* -terminal (term_backend.c): the same readback the screenshot above does, at
+ * the same moment - the back buffer still holds the finished frame and
+ * SDL_GL_SwapWindow below has not run. The rate cap lives inside
+ * portTermBackendWantsFrame, so a frame the terminal will not show costs no
+ * glReadPixels at all; that matters, because a 1080p readback is 8 MB.
+ *
+ * The row order is bottom-up, exactly what glReadPixels returns: the downscale
+ * in term_backend.c flips it on the way out, so nothing here copies twice. */
+static void gfx_sdl_maybe_terminal(void) {
+    int w = 0, h = 0;
+    size_t bytes;
+
+    if (!portTermBackendWantsFrame()) {
+        return;
+    }
+    SDL_GL_GetDrawableSize(wnd, &w, &h);
+    if (w <= 0 || h <= 0) {
+        return; /* minimised: nothing to capture, and no shape to describe */
+    }
+    bytes = (size_t)w * (size_t)h * 3;
+    if (bytes > term_px_cap) {
+        uint8_t *n = (uint8_t *)realloc(term_px, bytes);
+        if (n == NULL) {
+            return;
+        }
+        term_px = n;
+        term_px_cap = bytes;
+    }
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, term_px);
+    portTermBackendSubmitFrame(term_px, w, h);
+}
+
 /* Title-bar stats: presented fps, the ticks/sec g_GlobalTickCount advances at,
  * the FIELDS the sim is credited per second, and the fields each tick absorbed
  * + the GE_TICKHZ configuration and the actual pump rate. Updated twice a
@@ -1071,6 +1139,7 @@ extern "C" void portHitchFrame(unsigned long long interval_us, unsigned long lon
 
 static void gfx_sdl_swap_buffers_begin(void) {
     gfx_sdl_maybe_screenshot();
+    gfx_sdl_maybe_terminal();
     /* Both waits sit inside gfx_run's timer, so the stats line's gl figure
      * carries them: split out, or a limiter-paced 60fps reads as 16ms of GL. */
     const uint64_t t0 = SDL_GetPerformanceCounter();

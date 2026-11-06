@@ -164,6 +164,8 @@ has to be typed into the console.
 | `-classic` | Start in **Classic Mode** — the same thing the `classic_toggle` key does (Tab by default). That is 240p, `maxfps=-1` (hardware pacing), 4× MSAA, the 4:3 pillars and the classic filter, all of it, not just the AA bit. `-n64_aa` is the **same flag**, kept as an alias. |
 | `-audio_pump` | Draw the `cl_audio_pump` block from the first frame, in menus and cutscenes too. |
 | `-audio_log` | Write `Data/Logs/audio_pump.log`, one line a second. |
+| `-terminal` | Draw the game as coloured ASCII art in the terminal instead of a window. Aliases: `--backend=caca`, `--backend=terminal`. Pick a driver with `--backend=ffmpeg` or `--backend=ansi`. See §3.4. |
+| `-terminal_glitch` | Keep the game's log **on** the terminal instead of routing it to `Data/Logs/terminal.log`, so the `ge:` lines stamp themselves over the art. Implies `-terminal`. Alias `-glitch`. See §3.4. |
 
 ```bash
 ./ProjectMidas -skip -audio_pump                 # file select, block on, no waiting
@@ -249,6 +251,137 @@ flags do the same thing earlier, are named after the console verbs so the two
 cannot drift, and are covered by `port/tests/boot_flags.c` under `ctest` — a flag
 that is silently ignored looks exactly like one that worked, which is a failure
 this project has already paid for once (`GE_TICKHZ=hw`, §2.4).
+
+### 3.4 `-terminal` — the game as ASCII art
+
+The frame the renderer has just finished is read back with `glReadPixels` and
+piped, as raw `rgb24`, into
+
+```
+ffmpeg -f rawvideo -pixel_format rgb24 -video_size WxH -i - -f caca -
+```
+
+so libcaca does the character mapping, the colour and the dithering. **There is
+no custom ASCII renderer here** — that is the whole point of the flag. The SDL
+window is still created (a GL context needs a drawable) but never shown.
+
+**FFmpeg must be built with `--enable-libcaca`.** Many are not: Homebrew's
+`ffmpeg` is not, and reports `Requested output format 'caca' is not known`. The
+backend probes for it once, at the first frame, and if it is missing it renders
+the same pixels itself as 24-bit colour half-blocks (`▀`, foreground on top,
+background below) straight to stdout. Which path ran is printed as
+`ge: terminal: …` — a silent fallback would look identical to the real thing.
+
+There are therefore **two drivers**, and each has a flag, because the interesting
+question with a hack like this is which one you are actually looking at:
+
+| Flag | Driver |
+| --- | --- |
+| `-terminal`, `--backend=caca`, `--backend=terminal` | **auto** — probe for a caca-capable ffmpeg, otherwise the ANSI fallback. What a player wants. |
+| `--backend=ffmpeg` | force the ffmpeg → libcaca pipe. Falls back to ANSI if the pipe cannot open. |
+| `--backend=ansi` | force the built-in ANSI renderer, no ffmpeg involved. |
+
+The flag **outranks** `MIDAS_TERM_DRIVER` (command line over environment, as
+everywhere else in this port), and `--backend=<something-else>` is reported as an
+ignored argument rather than silently doing nothing.
+
+To get the real caca driver on macOS, build an ffmpeg that has it — the script
+leaves `/opt/homebrew` alone and installs into `.deps/ffmpeg-caca`:
+
+```sh
+scripts/port/build_ffmpeg_caca.sh
+./ProjectMidas -terminal            # found automatically, see below
+```
+
+The backend looks for an ffmpeg in this order, and takes the first that actually
+lists a `caca` device:
+
+1. `MIDAS_TERM_FFMPEG`, if set — an explicit choice always wins.
+2. `.deps/ffmpeg-caca/bin/ffmpeg`, from the current directory and one level up.
+   The game runs from `build_macos/` while `.deps/` sits at the repo root, so the
+   build the script made is used *without* pointing at it by hand.
+3. `ffmpeg` from `PATH`.
+
+That order exists because the first version skipped step 2 and quietly used
+Homebrew's ffmpeg — which has no caca — so it fell back to ANSI while the
+libcaca build sat unused. The log line names the binary chosen, so this is
+visible rather than assumed.
+
+```bash
+./ProjectMidas -terminal                      # 20 fps, auto-detected driver
+./ProjectMidas -terminal -skip -stage dam     # straight into Dam, no menus
+./ProjectMidas --backend=ansi -terminal       # force the built-in renderer
+./ProjectMidas -terminal_glitch               # logs stamped over the picture
+```
+
+| Variable | Effect |
+| --- | --- |
+| `MIDAS_TERM_FPS` | Frame cap, default `20`. This caps how often the terminal is repainted, not the game's simulation, which keeps its normal rate. |
+| `MIDAS_TERM_DRIVER` | `ffmpeg` or `ansi` — force a driver and skip the probe. `ansi` is how you check the fallback deliberately. The `--backend=` flags outrank this. |
+| `MIDAS_TERM_FFMPEG` | The ffmpeg binary to use, outranking the built-in search. Must have libcaca for the caca driver. |
+| `MIDAS_TERM_SIZE` | `WxH` to read back for the pipe, default ≤320 wide with the window's aspect kept. |
+| `MIDAS_TERM_SHOWWINDOW` | `1` keeps the window visible. The escape hatch for a driver that will not render into a hidden window. |
+| `MIDAS_TERM_NOLOG` | `1` keeps the game's log on the terminal instead of `Data/Logs/terminal.log`. The same switch as `-terminal_glitch`, from the environment. |
+
+#### Input: the pad works, the keyboard cannot
+
+The picture does not need the window, so `-terminal` hides it. Two consequences,
+and only one of them is fixable:
+
+- **A pad works.** A hidden window can never hold focus, and SDL drops joystick
+events for an unfocused app unless told otherwise - so `-terminal` forces
+  `SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS` (the same hint the port's
+  `[input] background_input` option sets). The boot log says so:
+  `SDL: -terminal: joystick background events ON`.
+- **A keyboard does not.** Key events go to the focused window, and a hidden one
+  cannot be focused. That is not a bug to fix in the backend; it is what hiding a
+  window means. Use a pad, or launch with `MIDAS_TERM_SHOWWINDOW=1` and keep the
+  small window focused - the art is in the terminal either way.
+
+#### Logs on the terminal, or in a file (`-terminal_glitch`)
+
+The default routes the game's log to `Data/Logs/terminal.log` so the picture is
+clean. `-terminal_glitch` (alias `-glitch`, or `MIDAS_TERM_NOLOG=1`) does the
+opposite on purpose: the `ge:` lines stay on the terminal and land on top of the
+art at whatever column the cursor reached, leaving a staircase of indented text.
+
+This is a toggle, not a bug and not a fix. Both states are reachable and both are
+logged — `ge: video: <flag> -> the terminal backend (<driver>, log on the terminal)`
+versus `(… , log routed to a file)` — so a screenshot cannot be misread as the
+other mode.
+
+#### Why the picture used to bob up and down
+
+`-terminal` takes over the whole screen, but the game keeps logging, and its
+`ge:` lines went to the same terminal. Both drivers were painted over by them,
+and a line landing on the last row makes the terminal scroll — the next repaint
+pulled the image back, and the whole picture visibly shifted up and down.
+
+The fix is that **the game's stderr is redirected to `Data/Logs/terminal.log`**
+when the backend starts, for **both** drivers (it happens in the shared enable
+path, before any driver is chosen). The player still sees the mode and frame cap
+on the terminal; everything after that goes to the file, including which driver
+was selected.
+
+Measured, with five log lines emitted between every frame for 20 frames:
+
+- **redirect on** — 0 scroll events on both the caca and the ANSI driver;
+- **redirect off** (`MIDAS_TERM_NOLOG=1`) — 76 scroll events on ANSI, i.e. the
+  bob comes straight back. So the redirect is what fixes it, not a coincidence.
+
+Two further details, both smaller than the redirect but still load-bearing:
+
+- The **ANSI** renderer places each row with an absolute cursor escape and emits
+  **no newlines**, so a frame cannot scroll the terminal by itself. Its first
+  version ended every row with `\n`, which parked the cursor on the last line —
+  that was the original bug.
+- Both drivers use the **alternate screen**, so your scrollback is untouched and
+  is restored when the game exits.
+
+Both drivers are covered by `port/tests/term_backend.c` under `ctest` for the
+parts that fail quietly — an upside-down or squashed picture, a short row, and a
+regression guard that fails if a newline ever reappears in a frame. The
+spawn-and-write path needs a real run, and says so.
 
 ---
 

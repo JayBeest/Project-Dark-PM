@@ -13,6 +13,7 @@
 #include <ultra64.h>
 #include "port_options.h"
 #include "boot_flags.h"   /* the -n64_aa / -audio_pump / -audio_log parse */
+#include "term_backend.h"  /* -terminal: framebuffer -> ffmpeg -f caca */
 #include "classic_mode.h"  /* portClassicPartApplies: the pure-vs-custom rule */
 #include "classic_split.h" /* the one-time n64_aa -> classic_mode migration */
 #include "video_env.h"     /* the env overrides that can contradict a mode */
@@ -5155,6 +5156,31 @@ static void videoApplyBootArgs(void)
     if (s_BootFlags.stage != NULL)
     {
         portConLogf("ge: video: -stage %s -> straight into the mission\n", s_BootFlags.stage);
+    }
+    if (s_BootFlags.terminal)
+    {
+        /* Enabled HERE, not at the first frame: videoInit creates the window a
+         * few hundred lines below, and the window backend asks whether to show
+         * it. The driver (ffmpeg caca or the ANSI fallback) is decided at the
+         * first captured frame, when the frame size is finally known - although
+         * --backend=ansi/ffmpeg pins it now, which outranks MIDAS_TERM_DRIVER. */
+        /* The log goes to a file: the terminal is the picture now. Set the
+         * path BEFORE enabling, because enabling is what redirects stderr.
+         * -terminal_glitch deliberately skips it, leaving the game's lines on
+         * the terminal where they stamp over the art (see boot_flags.h); the
+         * backend reports which of the two it is doing. */
+        if (!s_BootFlags.terminal_glitch)
+        {
+            extern const char *portLogPath(const char *name); /* main.c */
+            portTermBackendSetLogPath(portLogPath("terminal.log"));
+        }
+        portTermBackendSetEnabled(1);
+        portTermBackendSetDriver(s_BootFlags.terminal_driver);
+        portConLogf("ge: video: %s -> the terminal backend (%s, %s)\n",
+                    (s_BootFlags.terminal_spelling != NULL) ? s_BootFlags.terminal_spelling : "-terminal",
+                    (s_BootFlags.terminal_driver == 1) ? "forced ffmpeg caca" :
+                    (s_BootFlags.terminal_driver == 2) ? "forced ANSI" : "auto-detect",
+                    s_BootFlags.terminal_glitch ? "log on the terminal" : "log routed to a file");
     }
 }
 
