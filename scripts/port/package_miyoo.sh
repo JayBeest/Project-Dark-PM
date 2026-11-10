@@ -44,6 +44,15 @@ else
 fi
 chmod +x "$OUT/ProjectMidas"
 
+# The M0 present-path probe (scripts/port/build_m0.sh) writes straight into
+# $OUT, because the launcher runs it from the same folder as the game. It is
+# not required for the game to start, so its absence is a note, not an error.
+if [ -x "$OUT/m0_present" ]; then
+    echo "   m0 probe: included"
+else
+    echo "   m0 probe: not built (scripts/port/build_m0.sh)"
+fi
+
 # ---- the Miyoo SDL2 fork's runtime -------------------------------------------
 # libmi_*.so are NOT shipped: they belong to the firmware and sit in
 # /config/lib and /customer/lib, which launch.sh puts on LD_LIBRARY_PATH.

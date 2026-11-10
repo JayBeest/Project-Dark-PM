@@ -48,6 +48,10 @@ macOS is unregressed by it — `ctest` 14/14.
   `Miyoo Mini` audio).
 - `scripts/port/package_miyoo.sh` assembles 43 MB into
   `dist/App/ProjectMidas/`.
+- `m0_present` cross-compiles and links: 32-bit ARM EABI5 hard-float, `DT_NEEDED`
+  `libmi_gfx.so`, `libmi_sys.so`, `libmi_common.so`, libpthread/libdl/librt/libm/libc,
+  `RPATH` `[$ORIGIN]`. It needs `-lpthread -ldl -lrt` on the link line because the
+  SDK's `libmi_common.so` has no SONAME and does not carry its own dependencies.
 - macOS: full build, `ctest` 100% (14/14).
 
 ### Not verified — do not assume any of this
@@ -106,15 +110,35 @@ cart image in its `Data/`, run. `launch.sh` logs to `Data/Logs/launch.log`.
 **Milestone M0 in `docs/port/miyoo-backend.md`: prove the present path with no
 3D involved.**
 
-A tiny program that `MI_SYS_MMA_Alloc`s a surface, fills it with a gradient on
-the CPU, `MI_GFX_BitBlit`s it to `/dev/fb0` and flips. Run it from `launch.sh`.
-
-It answers the two questions the whole plan hangs on:
+The tool now exists. `scripts/port/m0_present.c` allocates an MI_SYS surface,
+paints a gradient with corner markers on the CPU, `MI_GFX_BitBlit`s it to
+`/dev/fb0`, flips, reads the panel back and times 60 present passes. It answers
+the two questions the whole plan hangs on:
 
 1. Does `MI_GFX_BitBlit` **scale** when the source and destination rects differ?
 2. Does an MI_SYS allocation land **above `0x10000000`**, which
    `port/src/pcsched.c` requires (below it, `seg_addr()` misreads display-list
    words as segment references)?
+
+It is written, cross-compiled and packaged — **and has never executed**, because
+nothing in this repository can execute ARM code without the device.
+
+```sh
+docker run --rm -v "$PWD":/root/workspace/Miyoo_port miyoo-build \
+  sh /root/workspace/Miyoo_port/scripts/port/build_m0.sh   # -> dist/.../m0_present
+```
+
+On the device, from a terminal in the app folder, or by dropping the marker
+file and launching from OnionOS:
+
+```sh
+cd /mnt/SDCARD/App/ProjectMidas && ./launch.sh m0
+touch /mnt/SDCARD/App/ProjectMidas/Data/m0_probe   # alternative
+```
+
+Either way the answers land in `Data/Logs/m0.log`, one `key=value` per line,
+ending in three `VERDICT` lines. It also leaves the gradient on screen for
+three seconds after the blits.
 
 Do not start the rasteriser before M0 passes. If the blit or the allocation
 does not behave, the architecture changes, not the code.
@@ -162,12 +186,16 @@ the `gfx_pc.h` edit was checked.
 | `scripts/port/miyoo-build.Dockerfile` | derived build image |
 | `scripts/port/build_miyoo_sdl2.sh` | builds the ARM SDL2 fork + json-c |
 | `scripts/port/make_baserom_z64.py` | byte-order normalisation of the cart |
+| `scripts/port/m0_present.c` | M0 present-path probe: MMA alloc, gradient, BitBlit, readback, timing |
+| `scripts/port/build_m0.sh` | cross-compiles and links that probe against `sdl2/mini/lib` |
 | `scripts/port/package_miyoo.sh` | assembles the OnionOS folder |
 | `dist/App/ProjectMidas/launch.sh` | OnionOS launcher (park MainUI, log the run) |
 | `dist/App/ProjectMidas/config.json` | App entry |
 
 Modified: `CMakeLists.txt` (ARM branches, C++17), `port/fast3d/gfx_cc.h`,
-`port/fast3d/gfx_pc.h`, `port/src/input_pc.c`, `.gitignore`.
+`port/fast3d/gfx_pc.h`, `port/src/input_pc.c`, `.gitignore`,
+`dist/App/ProjectMidas/launch.sh` (an `m0` mode), `scripts/port/package_miyoo.sh`
+(reports whether the probe is in the package).
 
 ---
 

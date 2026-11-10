@@ -330,6 +330,7 @@ build_miyoo_deps/
 # binary, the handheld's shared objects, the icon and the copied support .txt
 # files are all produced by scripts/port/package_miyoo.sh.
 /dist/App/ProjectMidas/ProjectMidas
+/dist/App/ProjectMidas/m0_present
 /dist/App/ProjectMidas/*.so
 /dist/App/ProjectMidas/*.so.*
 /dist/App/ProjectMidas/icon.png

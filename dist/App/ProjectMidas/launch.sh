@@ -15,6 +15,31 @@ export LD_LIBRARY_PATH="$PWD:/config/lib:/customer/lib:${LD_LIBRARY_PATH:-}"
 
 mkdir -p Data/Logs
 
+# MainUI owns the panel and the audio device. Park it for the run and wake it
+# however we exit, including on error or Ctrl-C from a debug shell.
+MAINUI_PID=$(pidof MainUI 2>/dev/null)
+[ -n "$MAINUI_PID" ] && kill -STOP "$MAINUI_PID" 2>/dev/null
+trap '[ -n "$MAINUI_PID" ] && kill -CONT "$MAINUI_PID" 2>/dev/null' EXIT INT TERM HUP
+
+# ---- M0: the present-path probe ---------------------------------------------
+#   ./launch.sh m0          from a terminal on the device, or
+#   touch Data/m0_probe     then launch this app from OnionOS.
+# It draws a gradient and exits; the answers land in Data/Logs/m0.log. This is
+# the milestone that decides whether MI_GFX scales and where MI_SYS memory
+# lands (docs/port/miyoo-backend.md).
+if [ "${1:-}" = "m0" ] || [ -f Data/m0_probe ]; then
+    rm -f Data/m0_probe
+    if [ ! -x ./m0_present ]; then
+        echo "m0_present is not in this package; build it with scripts/port/build_m0.sh" \
+            >> Data/Logs/m0.log
+        exit 127
+    fi
+    ./m0_present Data/Logs/m0.log >/dev/null 2>&1
+    STATUS=$?
+    echo "m0 exit status: $STATUS" >> Data/Logs/m0.log
+    exit $STATUS
+fi
+
 # Find the cart image the way the game does, but pick ONE file and pass it
 # explicitly so the log says which image was used.
 ROM=""
@@ -24,12 +49,6 @@ for f in Data/*.z64 Data/*.v64 Data/*.n64 Data/*.Z64 Data/*.V64 Data/*.N64; do
         break
     fi
 done
-
-# MainUI owns the panel and the audio device. Park it for the run and wake it
-# however we exit, including on error or Ctrl-C from a debug shell.
-MAINUI_PID=$(pidof MainUI 2>/dev/null)
-[ -n "$MAINUI_PID" ] && kill -STOP "$MAINUI_PID" 2>/dev/null
-trap '[ -n "$MAINUI_PID" ] && kill -CONT "$MAINUI_PID" 2>/dev/null' EXIT INT TERM HUP
 
 # The console is not visible on the device, so the run log is the only
 # evidence a launch attempt leaves behind.
